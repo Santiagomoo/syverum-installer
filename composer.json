@@ -1,0 +1,13 @@
+{
+  "name": "syverum/installer",
+  "description": "CLI installer for Syverum framework projects.",
+  "type": "project",
+  "license": "MIT",
+  "require": {
+    "php": "^8.0"
+  },
+
+  "bin": [
+    "bin/syverum"
+  ]
+}
