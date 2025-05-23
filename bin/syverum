@@ -13,7 +13,7 @@ $projectName = $argv[2];
 
 echo "🚀 Creando nuevo proyecto Syverum: {$projectName}\n";
 
-$repoUrl = 'https://github.com/Santiagomoo/Syverum.git';
+$repoUrl = 'https://github.com/Santiagomoo/syverum-skeleton.git';
 
 // Clonar el repositorio base
 passthru("git clone $repoUrl $projectName", $exitCode);
