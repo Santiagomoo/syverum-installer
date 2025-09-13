@@ -1,6 +1,40 @@
 #!/usr/bin/env php
 <?php
 
+// Utilidades
+function isWindows(): bool {
+    return strtoupper(substr(PHP_OS_FAMILY, 0, 3)) === 'WIN';
+}
+
+function detectCommand(array $candidates): ?string {
+    foreach ($candidates as $cmd) {
+        $check = isWindows() ? "where $cmd" : "command -v $cmd";
+        $output = [];
+        $exit = 1;
+        @exec($check, $output, $exit);
+        if ($exit === 0 && !empty($output)) {
+            return $cmd;
+        }
+    }
+    return null;
+}
+
+function rrmdir(string $dir): void {
+    if (!is_dir($dir)) return;
+    $iterator = new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS);
+    $files = new RecursiveIteratorIterator($iterator, RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($files as $file) {
+        $path = $file->getPathname();
+        if ($file->isDir() && !$file->isLink()) {
+            @rmdir($path);
+        } else {
+            @chmod($path, 0666);
+            @unlink($path);
+        }
+    }
+    @rmdir($dir);
+}
+
 $argvCount = count($argv);
 
 if ($argvCount !== 3 || $argv[1] !== 'new' || empty($argv[2])) {
@@ -11,23 +45,105 @@ if ($argvCount !== 3 || $argv[1] !== 'new' || empty($argv[2])) {
 
 $projectName = $argv[2];
 
-echo "🚀 Creando nuevo proyecto Syverum: {$projectName}\n";
+echo "Creando nuevo proyecto Syverum: {$projectName}\n";
 
 $repoUrl = 'https://github.com/Santiagomoo/syverum-skeleton.git';
 
 // Clonar el repositorio base
-passthru("git clone $repoUrl $projectName", $exitCode);
+$targetArg = isWindows() ? '"' . $projectName . '"' : escapeshellarg($projectName);
+passthru("git clone $repoUrl $targetArg", $exitCode);
 
 if ($exitCode !== 0) {
-    echo "❌ Error al clonar el repositorio.\n";
+    echo "Error: no se pudo clonar el repositorio.\n";
     exit($exitCode);
 }
 
-// Quitar el .git para desvincular del repositorio original
-passthru("rm -rf {$projectName}/.git");
+// Quitar el .git para desvincular del repositorio original (multiplataforma)
+$gitDir = $projectName . DIRECTORY_SEPARATOR . '.git';
+if (is_dir($gitDir)) {
+    // Eliminación recursiva segura sin depender de comandos del SO
+    rrmdir($gitDir);
+}
 
-// Instalar dependencias composer
+// Cambiar al directorio del proyecto
 chdir($projectName);
-passthru("composer install");
 
-echo "\n✅ Proyecto creado correctamente en './$projectName'\n";
+// Instalar dependencias de Composer (con detección en Windows)
+$composerCmd = detectCommand(['composer', 'composer.bat']);
+if ($composerCmd === null) {
+    echo "Advertencia: Composer no encontrado en PATH. Omite instalación PHP.\n";
+} else {
+    passthru("$composerCmd install");
+}
+
+// Instalar dependencias de Node si hay package.json
+if (file_exists('package.json')) {
+    $npmCmd = detectCommand(['npm', 'npm.cmd']);
+    $pm = $npmCmd; // preferimos npm
+    if ($pm === null) {
+        $pm = detectCommand(['yarn', 'yarn.cmd', 'pnpm', 'pnpm.cmd']);
+    }
+    if ($pm !== null) {
+        echo "\nInstalando dependencias de Node con '$pm'...\n";
+        passthru("$pm install");
+    } else {
+        echo "\nNota: package.json detectado pero no se encontró npm/yarn/pnpm en PATH.\n";
+    }
+
+    // Asegurar scripts para Tailwind (watch y build) si no existen
+    $pkgRaw = file_get_contents('package.json');
+    $pkg = json_decode($pkgRaw, true);
+    if (is_array($pkg)) {
+        $pkg['scripts'] = $pkg['scripts'] ?? [];
+
+        // Detectar archivo de entrada CSS común
+        $inputCandidates = [
+            'resources/css/app.css',
+            'resources/css/main.css',
+            'resources/styles/app.css',
+        ];
+        $input = null;
+        foreach ($inputCandidates as $cand) {
+            if (file_exists($cand)) { $input = $cand; break; }
+        }
+        if ($input === null) { $input = 'resources/css/app.css'; }
+
+        $output = 'public/css/output.css';
+        if (!is_dir('public/css')) { @mkdir('public/css', 0777, true); }
+
+        $modifiedPkg = false;
+        if (!isset($pkg['scripts']['dev'])) {
+            $pkg['scripts']['dev'] = "npx @tailwindcss/cli -i ./{$input} -o ./{$output} --watch";
+            $modifiedPkg = true;
+        }
+        if (!isset($pkg['scripts']['build'])) {
+            $pkg['scripts']['build'] = "npx @tailwindcss/cli -i ./{$input} -o ./{$output} --minify";
+            $modifiedPkg = true;
+        }
+
+        if ($modifiedPkg) {
+            file_put_contents('package.json', json_encode($pkg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+        }
+    }
+}
+
+// Agregar script 'dev' a composer.json para 'composer run dev'
+if (file_exists('composer.json')) {
+    $composerJson = file_get_contents('composer.json');
+    $data = json_decode($composerJson, true);
+    if (is_array($data)) {
+        if (!isset($data['scripts']) || !is_array($data['scripts'])) {
+            $data['scripts'] = [];
+        }
+        if (!isset($data['scripts']['dev'])) {
+            // Servidor embebido de PHP en puerto 3000 sirviendo /public
+            $data['scripts']['dev'] = '@php -S 127.0.0.1:3000 -t public';
+            file_put_contents('composer.json', json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+        }
+    }
+}
+
+echo "\n✔ Proyecto creado correctamente en './$projectName'\n";
+echo "\nPara iniciar el entorno local:\n";
+echo "  cd $projectName\n";
+echo "  composer run dev   (inicia en http://127.0.0.1:3000)\n";
