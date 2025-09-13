@@ -1,7 +1,7 @@
 #!/usr/bin/env php
 <?php
 
-// Utilidades
+// Utilidades comunes
 function isWindows(): bool {
     return strtoupper(substr(PHP_OS_FAMILY, 0, 3)) === 'WIN';
 }
@@ -35,115 +35,217 @@ function rrmdir(string $dir): void {
     @rmdir($dir);
 }
 
-$argvCount = count($argv);
-
-if ($argvCount !== 3 || $argv[1] !== 'new' || empty($argv[2])) {
-    echo "Uso correcto:\n";
-    echo "  syverum new [nombre-del-proyecto]\n";
-    exit(1);
-}
-
-$projectName = $argv[2];
-
-echo "Creando nuevo proyecto Syverum: {$projectName}\n";
-
-$repoUrl = 'https://github.com/Santiagomoo/syverum-skeleton.git';
-
-// Clonar el repositorio base
-$targetArg = isWindows() ? '"' . $projectName . '"' : escapeshellarg($projectName);
-passthru("git clone $repoUrl $targetArg", $exitCode);
-
-if ($exitCode !== 0) {
-    echo "Error: no se pudo clonar el repositorio.\n";
-    exit($exitCode);
-}
-
-// Quitar el .git para desvincular del repositorio original (multiplataforma)
-$gitDir = $projectName . DIRECTORY_SEPARATOR . '.git';
-if (is_dir($gitDir)) {
-    // Eliminación recursiva segura sin depender de comandos del SO
-    rrmdir($gitDir);
-}
-
-// Cambiar al directorio del proyecto
-chdir($projectName);
-
-// Instalar dependencias de Composer (con detección en Windows)
-$composerCmd = detectCommand(['composer', 'composer.bat']);
-if ($composerCmd === null) {
-    echo "Advertencia: Composer no encontrado en PATH. Omite instalación PHP.\n";
-} else {
-    passthru("$composerCmd install");
-}
-
-// Instalar dependencias de Node si hay package.json
-if (file_exists('package.json')) {
-    $npmCmd = detectCommand(['npm', 'npm.cmd']);
-    $pm = $npmCmd; // preferimos npm
-    if ($pm === null) {
-        $pm = detectCommand(['yarn', 'yarn.cmd', 'pnpm', 'pnpm.cmd']);
+// Helpers de generación
+function studly(string $value): string {
+    $value = str_replace(['-', '_'], ' ', $value);
+    // Eliminar cualquier caracter no alfanumérico (excepto espacio usado como separador temporal)
+    $value = preg_replace('/[^A-Za-z0-9 ]+/', ' ', $value);
+    $parts = preg_split('/\s+/', trim($value));
+    $out = '';
+    foreach ($parts as $p) {
+        if ($p === '') continue;
+        $out .= strtoupper($p[0]) . substr($p, 1);
     }
-    if ($pm !== null) {
-        echo "\nInstalando dependencias de Node con '$pm'...\n";
-        passthru("$pm install");
+    return $out;
+}
+
+function normalizeSegments(string $name): array {
+    $name = trim($name, " \\/");
+    $name = str_replace('\\', '/', $name);
+    $parts = array_values(array_filter(explode('/', $name), 'strlen'));
+    return array_map('studly', $parts);
+}
+
+function inProjectRoot(): bool {
+    return is_dir('app') && is_file('composer.json');
+}
+
+function writeClassFile(string $baseDir, string $baseNamespace, string $name, string $type): void {
+    if (!inProjectRoot()) {
+        echo "Error: ejecuta este comando en la raíz del proyecto Syverum.\n";
+        exit(1);
+    }
+
+    $segments = normalizeSegments($name);
+    if (empty($segments)) {
+        echo "Error: nombre inválido.\n";
+        exit(1);
+    }
+
+    $className = array_pop($segments);
+    $subPath = empty($segments) ? '' : DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $segments);
+    $targetDir = rtrim($baseDir, DIRECTORY_SEPARATOR) . $subPath;
+    if (!is_dir($targetDir) && !@mkdir($targetDir, 0777, true)) {
+        echo "Error: no se pudo crear el directorio '$targetDir'.\n";
+        exit(1);
+    }
+    $filePath = $targetDir . DIRECTORY_SEPARATOR . $className . '.php';
+    if (file_exists($filePath)) {
+        echo "Aviso: el archivo ya existe: $filePath\n";
+        exit(1);
+    }
+
+    $nsSuffix = empty($segments) ? '' : '\\' . implode('\\', $segments);
+    $namespace = $baseNamespace . $nsSuffix;
+
+    if ($type === 'controller') {
+        $contents = "<?php\n\nnamespace $namespace;\n\nclass $className\n{\n    public function index()\n    {\n        return view('welcome');\n    }\n}\n\n?>\n";
+    } elseif ($type === 'middleware') {
+        $contents = "<?php\n\nnamespace $namespace;\n\nuse Core\\Http\\Middleware\\MiddlewareInterface;\n\nclass $className implements MiddlewareInterface\n{\n    public function handle(callable \$next)\n    {\n        // Agrega aquí tu lógica de middleware\n\n        return \$next();\n    }\n}\n\n?>\n";
     } else {
-        echo "\nNota: package.json detectado pero no se encontró npm/yarn/pnpm en PATH.\n";
+        echo "Tipo desconocido: $type\n";
+        exit(1);
     }
 
-    // Asegurar scripts para Tailwind (watch y build) si no existen
-    $pkgRaw = file_get_contents('package.json');
-    $pkg = json_decode($pkgRaw, true);
-    if (is_array($pkg)) {
-        $pkg['scripts'] = $pkg['scripts'] ?? [];
-
-        // Detectar archivo de entrada CSS común
-        $inputCandidates = [
-            'resources/css/app.css',
-            'resources/css/main.css',
-            'resources/styles/app.css',
-        ];
-        $input = null;
-        foreach ($inputCandidates as $cand) {
-            if (file_exists($cand)) { $input = $cand; break; }
-        }
-        if ($input === null) { $input = 'resources/css/app.css'; }
-
-        $output = 'public/css/output.css';
-        if (!is_dir('public/css')) { @mkdir('public/css', 0777, true); }
-
-        $modifiedPkg = false;
-        if (!isset($pkg['scripts']['dev'])) {
-            $pkg['scripts']['dev'] = "npx @tailwindcss/cli -i ./{$input} -o ./{$output} --watch";
-            $modifiedPkg = true;
-        }
-        if (!isset($pkg['scripts']['build'])) {
-            $pkg['scripts']['build'] = "npx @tailwindcss/cli -i ./{$input} -o ./{$output} --minify";
-            $modifiedPkg = true;
-        }
-
-        if ($modifiedPkg) {
-            file_put_contents('package.json', json_encode($pkg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
-        }
+    if (file_put_contents($filePath, $contents) === false) {
+        echo "Error: no se pudo escribir '$filePath'.\n";
+        exit(1);
     }
+
+    echo "Creado: $filePath\n";
 }
 
-// Agregar script 'dev' a composer.json para 'composer run dev'
-if (file_exists('composer.json')) {
-    $composerJson = file_get_contents('composer.json');
-    $data = json_decode($composerJson, true);
-    if (is_array($data)) {
-        if (!isset($data['scripts']) || !is_array($data['scripts'])) {
-            $data['scripts'] = [];
+// ----------------- Router de comandos -----------------
+$argvCount = count($argv);
+$command = $argv[1] ?? null;
+
+if ($command === 'new') {
+    if ($argvCount < 3 || empty($argv[2])) {
+        echo "Uso: syverum new [nombre-del-proyecto]\n";
+        exit(1);
+    }
+
+    $projectName = $argv[2];
+    echo "Creando nuevo proyecto Syverum: {$projectName}\n";
+
+    $repoUrl = 'https://github.com/Santiagomoo/syverum-skeleton.git';
+
+    // Clonar el repositorio base
+    $targetArg = isWindows() ? '"' . $projectName . '"' : escapeshellarg($projectName);
+    passthru("git clone $repoUrl $targetArg", $exitCode);
+    if ($exitCode !== 0) {
+        echo "Error: no se pudo clonar el repositorio.\n";
+        exit($exitCode);
+    }
+
+    // Quitar el .git para desvincular del repositorio original (multiplataforma)
+    $gitDir = $projectName . DIRECTORY_SEPARATOR . '.git';
+    if (is_dir($gitDir)) {
+        rrmdir($gitDir);
+    }
+
+    // Cambiar al directorio del proyecto
+    chdir($projectName);
+
+    // Instalar dependencias de Composer (con detección en Windows)
+    $composerCmd = detectCommand(['composer', 'composer.bat']);
+    if ($composerCmd === null) {
+        echo "Advertencia: Composer no encontrado en PATH. Omite instalación PHP.\n";
+    } else {
+        passthru("$composerCmd install");
+    }
+
+    // Instalar dependencias de Node si hay package.json
+    if (file_exists('package.json')) {
+        $npmCmd = detectCommand(['npm', 'npm.cmd']);
+        $pm = $npmCmd; // preferimos npm
+        if ($pm === null) {
+            $pm = detectCommand(['yarn', 'yarn.cmd', 'pnpm', 'pnpm.cmd']);
         }
-        if (!isset($data['scripts']['dev'])) {
-            // Servidor embebido de PHP en puerto 3000 sirviendo /public
-            $data['scripts']['dev'] = '@php -S 127.0.0.1:3000 -t public';
+        if ($pm !== null) {
+            echo "\nInstalando dependencias de Node con '$pm'...\n";
+            passthru("$pm install");
+        } else {
+            echo "\nNota: package.json detectado pero no se encontró npm/yarn/pnpm en PATH.\n";
+        }
+
+        // Asegurar scripts para Tailwind (watch y build) si no existen
+        $pkgRaw = file_get_contents('package.json');
+        $pkg = json_decode($pkgRaw, true);
+        if (is_array($pkg)) {
+            $pkg['scripts'] = $pkg['scripts'] ?? [];
+
+            // Detectar archivo de entrada CSS común
+            $inputCandidates = [
+                'resources/css/app.css',
+                'resources/css/main.css',
+                'resources/styles/app.css',
+            ];
+            $input = null;
+            foreach ($inputCandidates as $cand) {
+                if (file_exists($cand)) { $input = $cand; break; }
+            }
+            if ($input === null) { $input = 'resources/css/app.css'; }
+
+            $output = 'public/css/output.css';
+            if (!is_dir('public/css')) { @mkdir('public/css', 0777, true); }
+
+            $modifiedPkg = false;
+            if (!isset($pkg['scripts']['dev'])) {
+                $pkg['scripts']['dev'] = "npx @tailwindcss/cli -i ./{$input} -o ./{$output} --watch";
+                $modifiedPkg = true;
+            }
+            if (!isset($pkg['scripts']['build'])) {
+                $pkg['scripts']['build'] = "npx @tailwindcss/cli -i ./{$input} -o ./{$output} --minify";
+                $modifiedPkg = true;
+            }
+
+            if ($modifiedPkg) {
+                file_put_contents('package.json', json_encode($pkg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
+            }
+        }
+    }
+
+    // Agregar/actualizar script 'dev' en composer.json para correr PHP + Tailwind en paralelo
+    if (file_exists('composer.json')) {
+        $composerJson = file_get_contents('composer.json');
+        $data = json_decode($composerJson, true);
+        if (is_array($data)) {
+            if (!isset($data['scripts']) || !is_array($data['scripts'])) {
+                $data['scripts'] = [];
+            }
+
+            // Reusar rutas detectadas para Tailwind si existen; si no, usar defaults
+            $twInput = isset($input) && $input ? $input : 'resources/css/app.css';
+            $twOutput = isset($output) && $output ? $output : 'public/css/output.css';
+
+            // Usamos npx para evitar requerir cambios adicionales en package.json
+            $concurrentDev = "npx -y concurrently \"php -S 127.0.0.1:3000 -t public\" \"npx -y @tailwindcss/cli -i ./{$twInput} -o ./{$twOutput} --watch\"";
+
+            // Siempre fijamos 'dev' al comando concurrente para asegurar Tailwind en desarrollo
+            $data['scripts']['dev'] = $concurrentDev;
             file_put_contents('composer.json', json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL);
         }
     }
+
+    echo "\nProyecto creado correctamente en './$projectName'\n";
+    echo "\nPara iniciar el entorno local:\n";
+    echo "  cd $projectName\n";
+    echo "  composer run dev   (http://127.0.0.1:3000)\n";
+    exit(0);
 }
 
-echo "\n✔ Proyecto creado correctamente en './$projectName'\n";
-echo "\nPara iniciar el entorno local:\n";
-echo "  cd $projectName\n";
-echo "  composer run dev   (inicia en http://127.0.0.1:3000)\n";
+if ($command === 'make:controller') {
+    if ($argvCount < 3 || empty($argv[2])) {
+        echo "Uso: syverum make:controller Nombre[/Subcarpeta]\n";
+        exit(1);
+    }
+    writeClassFile('app' . DIRECTORY_SEPARATOR . 'Http' . DIRECTORY_SEPARATOR . 'Controllers', 'App\\Http\\Controllers', $argv[2], 'controller');
+    exit(0);
+}
+
+if ($command === 'make:middleware') {
+    if ($argvCount < 3 || empty($argv[2])) {
+        echo "Uso: syverum make:middleware Nombre[/Subcarpeta]\n";
+        exit(1);
+    }
+    writeClassFile('app' . DIRECTORY_SEPARATOR . 'Http' . DIRECTORY_SEPARATOR . 'Middleware', 'App\\Http\\Middleware', $argv[2], 'middleware');
+    exit(0);
+}
+
+// Ayuda general
+echo "Uso:\n";
+echo "  syverum new [nombre-del-proyecto]\n";
+echo "  syverum make:controller [Nombre]\n";
+echo "  syverum make:middleware [Nombre]\n";
+exit(1);
