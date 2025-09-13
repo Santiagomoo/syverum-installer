@@ -10,20 +10,14 @@ Requirements
 - Node.js + npm (optional, for frontend dependencies)
 
 Install
-- Local usage: run the script directly with PHP
-  - `php syverum-installer/bin/syverum new my-project`
-- As a Composer binary (optional):
-  - `composer global config --quiet bin-dir --absolute` (check your bin dir)
-  - `composer global require syverum/installer` (when this package is published)
+  - `composer global require syverum/installer`
 
 Usage
 - Create a new project:
-  - `php syverum-installer/bin/syverum new project-name`
+  - `syverum new project-name`
 
 What the installer does
-- Clones `syverum-skeleton` into the target folder.
-- Removes `.git` from the clone (multi‑platform) to detach from the original repo.
-- Runs `composer install` for PHP dependencies (if Composer is available).
+- Runs `composer install` for PHP dependencies
 - If `package.json` exists, runs `npm install` (falls back to `yarn`/`pnpm` if available).
 - Ensures the project `composer.json` has the script:
   - `composer run dev` → `php -S 127.0.0.1:3000 -t public`
@@ -35,14 +29,6 @@ Local development
 - Start the PHP dev server on port 3000:
   - `cd project-name`
   - `composer run dev`
-- Start Tailwind CSS watcher in another terminal:
-  - `npm run dev`
-- Open `http://127.0.0.1:3000` in your browser.
-
-Notes on Tailwind
-- If your input CSS isn’t at `resources/css/app.css`, the installer tries common paths; adjust the script in `package.json` if needed.
-- The installer creates `public/css/` if missing so Tailwind can write `output.css`.
-- If Tailwind is not installed as a devDependency, the script uses `npx @tailwindcss/cli` which downloads and runs the official CLI.
 
 Troubleshooting
 - Composer not recognized: open a new terminal or use `composer.bat` on Windows.
