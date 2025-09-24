@@ -73,6 +73,12 @@ function writeClassFile(string $baseDir, string $baseNamespace, string $name, st
     }
 
     $className = array_pop($segments);
+
+    // Para middlewares, aseguramos sufijo 'Middleware'
+    if ($type === 'middleware' && substr($className, -10) !== 'Middleware') {
+        $className .= 'Middleware';
+    }
+
     $subPath = empty($segments) ? '' : DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $segments);
     $targetDir = rtrim($baseDir, DIRECTORY_SEPARATOR) . $subPath;
     if (!is_dir($targetDir) && !@mkdir($targetDir, 0777, true)) {
@@ -89,9 +95,51 @@ function writeClassFile(string $baseDir, string $baseNamespace, string $name, st
     $namespace = $baseNamespace . $nsSuffix;
 
     if ($type === 'controller') {
-        $contents = "<?php\n\nnamespace $namespace;\n\nclass $className\n{\n    public function index()\n    {\n        return view('welcome');\n    }\n}\n\n?>\n";
+        $contents = <<<PHP
+<?php
+
+namespace $namespace;
+
+class $className
+{
+    public function index()
+    {
+        return view('welcome');
+    }
+}
+
+PHP;
     } elseif ($type === 'middleware') {
-        $contents = "<?php\n\nnamespace $namespace;\n\nuse Core\\Http\\Middleware\\MiddlewareInterface;\n\nclass $className implements MiddlewareInterface\n{\n    public function handle(callable \$next)\n    {\n        // Agrega aquí tu lógica de middleware\n\n        return \$next();\n    }\n}\n\n?>\n";
+        // Plantilla EXACTA solicitada
+        $contents = <<<PHP
+<?php
+
+namespace $namespace;
+
+use Core\\Support\\Http\\Request;
+use Core\\Support\\Http\\Response;
+use Core\\Support\\Middleware\\Contracts\\MiddlewareInterface;
+
+final class $className implements MiddlewareInterface
+{
+    public function __construct(private Request \$request) {}
+
+    public function process(callable \$next): mixed
+    {
+        if (!\$this->estaAutenticado()) {
+            return Response::text('Unauthorized', 401);
+        }
+        return \$next();
+    }
+
+    private function estaAutenticado(): bool
+    {
+        /* tu lógica */
+        return false;
+    }
+}
+
+PHP;
     } else {
         echo "Tipo desconocido: $type\n";
         exit(1);
