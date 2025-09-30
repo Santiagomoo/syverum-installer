@@ -1,6 +1,15 @@
 #!/usr/bin/env php
 <?php
 
+// =======================================================
+// Syverum CLI (bin/syverum)
+// - new [project]
+// - make:controller [Name[/Subdir]]
+// - make:middleware [Name[/Subdir]]
+// - make:model [Name[/Subdir]]
+// - list (o help / --help)
+// =======================================================
+
 // Utilidades comunes
 function isWindows(): bool {
     return strtoupper(substr(PHP_OS_FAMILY, 0, 3)) === 'WIN';
@@ -60,6 +69,10 @@ function inProjectRoot(): bool {
     return is_dir('app') && is_file('composer.json');
 }
 
+/**
+ * Generador genérico de clases.
+ * $type: 'controller' | 'middleware' | 'model'
+ */
 function writeClassFile(string $baseDir, string $baseNamespace, string $name, string $type): void {
     if (!inProjectRoot()) {
         echo "Error: ejecuta este comando en la raíz del proyecto Syverum.\n";
@@ -79,12 +92,13 @@ function writeClassFile(string $baseDir, string $baseNamespace, string $name, st
         $className .= 'Middleware';
     }
 
-    $subPath = empty($segments) ? '' : DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $segments);
+    $subPath  = empty($segments) ? '' : DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $segments);
     $targetDir = rtrim($baseDir, DIRECTORY_SEPARATOR) . $subPath;
     if (!is_dir($targetDir) && !@mkdir($targetDir, 0777, true)) {
         echo "Error: no se pudo crear el directorio '$targetDir'.\n";
         exit(1);
     }
+
     $filePath = $targetDir . DIRECTORY_SEPARATOR . $className . '.php';
     if (file_exists($filePath)) {
         echo "Aviso: el archivo ya existe: $filePath\n";
@@ -110,7 +124,6 @@ class $className
 
 PHP;
     } elseif ($type === 'middleware') {
-        // Plantilla EXACTA solicitada
         $contents = <<<PHP
 <?php
 
@@ -140,6 +153,53 @@ final class $className implements MiddlewareInterface
 }
 
 PHP;
+    } elseif ($type === 'model') {
+        // Plantilla fija del modelo (solo cambia el nombre de clase)
+        $contents = <<<PHP
+<?php
+
+namespace $namespace;
+
+use Core\\Support\\Database\\Model;
+
+class $className extends Model
+{
+    /**
+     * Si es null, Syverum resuelve la tabla por convención:
+     * $className -> snake_case y plural (p.ej. Post -> posts)
+     */
+    protected ?string \$table = null;
+
+    /**
+     * Clave primaria (por defecto 'id').
+     */
+    protected string \$primaryKey = 'id';
+
+    /**
+     * Indica si la PK es autoincremental.
+     */
+    protected bool \$incrementing = true;
+
+    /**
+     * Campos permitidos para asignación masiva.
+     * Agrega aquí tus columnas escribibles.
+     */
+    protected array \$fillable = [
+        // 'title',
+        // 'content',
+        // 'author_id',
+    ];
+
+    /**
+     * Casts de atributos soportados por el Model base.
+     * Tipos típicos: 'int', 'float', 'bool', 'string', 'array', 'json', 'datetime'.
+     */
+    protected array \$casts = [
+        // 'author_id' => 'int',
+    ];
+}
+
+PHP;
     } else {
         echo "Tipo desconocido: $type\n";
         exit(1);
@@ -153,9 +213,24 @@ PHP;
     echo "Creado: $filePath\n";
 }
 
+function printCommandList(): void {
+    echo "Comandos disponibles:\n";
+    echo "  syverum new [nombre-del-proyecto]             Crea un proyecto desde el skeleton\n";
+    echo "  syverum make:controller [Nombre[/Subcarpeta]] Genera un controlador en app/Http/Controllers\n";
+    echo "  syverum make:middleware [Nombre[/Subcarpeta]] Genera un middleware en app/Http/Middleware\n";
+    echo "  syverum make:model [Nombre[/Subcarpeta]]      Genera un modelo en app/Models\n";
+    echo "  syverum list                                  Lista los comandos disponibles\n";
+    echo "  syverum help | --help                         Muestra esta ayuda\n";
+}
+
 // ----------------- Router de comandos -----------------
 $argvCount = count($argv);
 $command = $argv[1] ?? null;
+
+if ($command === 'list' || $command === 'help' || $command === '--help') {
+    printCommandList();
+    exit(0);
+}
 
 if ($command === 'new') {
     if ($argvCount < 3 || empty($argv[2])) {
@@ -291,9 +366,21 @@ if ($command === 'make:middleware') {
     exit(0);
 }
 
-// Ayuda general
+if ($command === 'make:model') {
+    if ($argvCount < 3 || empty($argv[2])) {
+        echo "Uso: syverum make:model Nombre[/Subcarpeta]\n";
+        exit(1);
+    }
+    writeClassFile('app' . DIRECTORY_SEPARATOR . 'Models', 'App\\Models', $argv[2], 'model');
+    exit(0);
+}
+
+// Ayuda general (fallback)
 echo "Uso:\n";
 echo "  syverum new [nombre-del-proyecto]\n";
 echo "  syverum make:controller [Nombre]\n";
 echo "  syverum make:middleware [Nombre]\n";
+echo "  syverum make:model [Nombre]\n";
+echo "  syverum list\n";
+echo "  syverum help | --help\n";
 exit(1);
